@@ -29,7 +29,7 @@ import { Shrimp } from "../target/types/shrimp";
 import * as utils from "./utils";
 import { Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { expect } from "chai";
-import { createCandyMachineAndSetCollection, mintNft } from "./nft";
+import { createCandyMachineAndSetCollection, mintNft, adminMint } from "./nft";
 import { mplCandyMachine as mplCoreCandyMachine } from "@metaplex-foundation/mpl-core-candy-machine";
 import * as fs from 'fs';
 
@@ -38,6 +38,7 @@ import * as fs from 'fs';
 // ---------------------------------------------------------------------------
 
 const OWNER_KEY_FILE = "keypairs/owner.json";
+const MINTER_KEY_FILE = "keypairs/test-minter.json";
 
 const PSN = new anchor.BN(10_000);
 const PSNH = new anchor.BN(5_000);
@@ -83,6 +84,7 @@ describe("Shrimp Farm", () => {
   let refAccount2: Keypair;
   let refStateAccount2: PublicKey;
   let randomAccount: Keypair;
+  let randomAccount2: Keypair;
   let dev1: Keypair;
   let dev2: Keypair;
   let dev3: Keypair;
@@ -124,6 +126,7 @@ describe("Shrimp Farm", () => {
     refStateAccount2 = await utils.findPlayerDataAcc(refAccount2.publicKey, authority.publicKey);
 
     randomAccount = Keypair.generate();
+    randomAccount2 = Keypair.generate();
 
     dev1 = Keypair.generate();
     dev2 = Keypair.generate();
@@ -135,6 +138,7 @@ describe("Shrimp Farm", () => {
     await provider.connection.requestAirdrop(dev3.publicKey, 1_000e9);
     await provider.connection.requestAirdrop(authority.publicKey, 1_000e9);
     await provider.connection.requestAirdrop(randomAccount.publicKey, 1_000e9);
+    await provider.connection.requestAirdrop(randomAccount2.publicKey, 1_000e9);
     await provider.connection.requestAirdrop(refAccount.publicKey, 1_000e9);
     await provider.connection.requestAirdrop(refAccount2.publicKey, 1_000e9);
     await new Promise(r => setTimeout(r, 5000));
@@ -191,6 +195,7 @@ describe("Shrimp Farm", () => {
     from: Keypair,
     amountLamports: number,
     ref: PublicKey | null,                 // what the callsite “wants”
+    payer: Keypair | null = null,
   ) => {
     const additionalComputeIx =
       anchor.web3.ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 });
@@ -198,8 +203,12 @@ describe("Shrimp Farm", () => {
     // if caller says “no referrer”, substitute the null key
     const refKey = ref ?? NULL_KEY;
 
+    // If not supplied, default to player
+    const actualPayer = payer || from
+
     const accs: any = {
       authority: authority.publicKey,
+      payer: actualPayer.publicKey,
       player: from.publicKey,
       referrer: refKey,
       referrerState: await utils.findPlayerDataAcc(refKey, authority.publicKey),
@@ -208,7 +217,7 @@ describe("Shrimp Farm", () => {
     const sig = await program.methods[method](new anchor.BN(amountLamports))
       .preInstructions([additionalComputeIx])
       .accounts(accs)
-      .signers([from])
+      .signers([from, actualPayer])
       .rpc({ commitment: "confirmed" });
 
     await new Promise(r => setTimeout(r, 500)); // tiny settle-time helper
@@ -216,8 +225,8 @@ describe("Shrimp Farm", () => {
   };
 
   // convenience wrappers hide the new detail from all tests
-  const buyPremarket = (f, amt, ref = null) => doBuy("buyPremarket", f, amt, ref);
-  const buyShrimp = (f, amt, ref = null) => doBuy("buyShrimp", f, amt, ref);
+  const buyPremarket = (f, amt, ref = null, payer = null) => doBuy("buyPremarket", f, amt, ref, payer);
+  const buyShrimp = (f, amt, ref = null, payer = null) => doBuy("buyShrimp", f, amt, ref, payer);
 
   const buyPremarketMulti = async (
     count: number,
@@ -242,14 +251,14 @@ describe("Shrimp Farm", () => {
   };
 
   const setupReferrer = async (refAccount, name = 'referrer') => {
-      // Perform minimum buy
-      const amount = new anchor.BN(1e7); 
-      await buyPremarket(refAccount, amount, NULL_KEY);
-      // Register
-      await program.methods.register(name)
-        .accounts({ player: refAccount.publicKey, authority: authority.publicKey })
-        .signers([refAccount])
-        .rpc();
+    // Perform minimum buy
+    const amount = new anchor.BN(1e7);
+    await buyPremarket(refAccount, amount, NULL_KEY);
+    // Register
+    await program.methods.register(name)
+      .accounts({ player: refAccount.publicKey, authority: authority.publicKey })
+      .signers([refAccount])
+      .rpc();
   }
 
   /* ═════════════════════════════ TESTS ════════════════════════════════════ */
@@ -362,6 +371,143 @@ describe("Shrimp Farm", () => {
     });
   });
 
+  /* ------------------------------------------------------------------ 2.1 */
+  describe("Admin NFT minting", () => {
+    let minterStateAccount: PublicKey;
+
+    beforeEach(() => {
+      // Derive the minter state PDA
+      [minterStateAccount] = PublicKey.findProgramAddressSync(
+        [Buffer.from("minter"), authority.publicKey.toBuffer()],
+        program.programId
+      );
+    });
+
+    it("adminMint fails when no minter is set", async () => {
+      const umi = await createUmi();
+      await createCandyMachineAndSetCollection(umi, program, authority, 10);
+      const minter = signerFromKeyFile(MINTER_KEY_FILE);
+      await provider.connection.requestAirdrop(minter.publicKey, 1_000e9);
+      const receiver = randomAccount;
+
+      await setupReferrer(refAccount);
+      await advancePreMarket();
+      await buyShrimp(randomAccount, new anchor.BN(1e9), refAccount.publicKey);
+
+      // Try to mint without setting minter first - should fail
+      await utils.shouldError(
+        adminMint(umi, program, authority.publicKey, minter, receiver),
+        "The program expected this account to be already initialized",
+      );
+    });
+
+    it("authority can set minter and minter can mint", async () => {
+      const umi = await createUmi();
+      await createCandyMachineAndSetCollection(umi, program, authority, 10);
+      const minter = signerFromKeyFile(MINTER_KEY_FILE);
+      await provider.connection.requestAirdrop(minter.publicKey, 1_000e9);
+      const receiver = randomAccount;
+
+      await setupReferrer(refAccount);
+      await advancePreMarket();
+      await buyShrimp(randomAccount, new anchor.BN(1e9), refAccount.publicKey);
+
+      // Authority sets the minter
+      await program.methods
+        .setMinter(minter.publicKey)
+        .accounts({
+          authority: authority.publicKey,
+        })
+        .signers([authority])
+        .rpc();
+
+      // Verify minter was set
+      const minterState = await program.account.minterState.fetch(minterStateAccount);
+      expect(minterState.minter.toString()).to.equal(minter.publicKey.toString());
+
+      // Now minter can mint
+      const before = (await program.account.gameState.fetch(gameStateAccount)).nftsMinted;
+      await adminMint(umi, program, authority.publicKey, minter, receiver);
+      const after = await program.account.gameState.fetch(gameStateAccount);
+      expect(after.nftsMinted).to.equal(before + 1);
+    });
+
+    it("non-minter cannot mint even after minter is set", async () => {
+      const umi = await createUmi();
+      await createCandyMachineAndSetCollection(umi, program, authority, 10);
+      const minter = signerFromKeyFile(MINTER_KEY_FILE);
+      const fakeAdmin = Keypair.generate();
+      await provider.connection.requestAirdrop(minter.publicKey, 1_000e9);
+      await provider.connection.requestAirdrop(fakeAdmin.publicKey, 1_000e9);
+      await new Promise(r => setTimeout(r, 500));
+      const receiver = randomAccount;
+
+      await setupReferrer(refAccount);
+      await advancePreMarket();
+      await buyShrimp(randomAccount, new anchor.BN(1e9), refAccount.publicKey);
+
+      // Authority sets the minter
+      await program.methods
+        .setMinter(minter.publicKey)
+        .accounts({
+          authority: authority.publicKey,
+        })
+        .signers([authority])
+        .rpc();
+
+      // Non-minter tries to mint - should fail
+      await utils.shouldError(
+        adminMint(umi, program, authority.publicKey, fakeAdmin, receiver),
+        "An address constraint was violated",
+      );
+    });
+
+    it("authority can update minter to new address", async () => {
+      const umi = await createUmi();
+      await createCandyMachineAndSetCollection(umi, program, authority, 10);
+      const minter1 = signerFromKeyFile(MINTER_KEY_FILE);
+      const minter2 = Keypair.generate();
+      await provider.connection.requestAirdrop(minter1.publicKey, 1_000e9);
+      await provider.connection.requestAirdrop(minter2.publicKey, 1_000e9);
+      await new Promise(r => setTimeout(r, 500));
+      const receiver = randomAccount;
+
+      await setupReferrer(refAccount);
+      await advancePreMarket();
+      await buyShrimp(randomAccount, new anchor.BN(1e9), refAccount.publicKey);
+
+      // Set first minter
+      await program.methods
+        .setMinter(minter1.publicKey)
+        .accounts({
+          authority: authority.publicKey,
+        })
+        .signers([authority])
+        .rpc();
+
+      // First minter can mint
+      await adminMint(umi, program, authority.publicKey, minter1, receiver);
+
+      // Update to second minter
+      await program.methods
+        .setMinter(minter2.publicKey)
+        .accounts({
+          authority: authority.publicKey,
+        })
+        .signers([authority])
+        .rpc();
+
+      // First minter can no longer mint
+      await utils.shouldError(
+        adminMint(umi, program, authority.publicKey, minter1, randomAccount2),
+        "An address constraint was violated",
+      );
+
+      // Second minter can mint
+      await adminMint(umi, program, authority.publicKey, minter2, randomAccount2);
+    });
+  });
+
   /* ------------------------------------------------------------------ 3 */
   describe("Minimum‑buy enforcement", () => {
     it("rejects amounts below 0.01 SOL in both phases", async () => {
@@ -389,6 +535,77 @@ describe("Shrimp Farm", () => {
         buyShrimp(wallet.payer, small, refAccount.publicKey),
         "Buy amount below the 0.01 SOL minimum",
       );
+    });
+  });
+
+  /* ------------------------------------------------------------------ 4 */
+  describe("Buy for friend", () => {
+    it("allows another account to buy for player", async () => {
+      const amount = new anchor.BN(1e8);
+      const refBonus = amount.toNumber() * 0.04;
+      const cashback = amount.toNumber() * 0.01;
+
+      await setupReferrer(randomAccount);
+
+      await buyPremarket(wallet.payer, amount, randomAccount.publicKey, randomAccount);
+
+      // Referrer should be set to to random
+      {
+        const player1 = await program.account.playerState.fetch(playerAccount);
+        expect(player1.currentReferrer.toBase58()).to.equal(randomAccount.publicKey.toBase58());
+      }
+
+      await advancePreMarket();
+      await buyShrimp(wallet.payer, amount, randomAccount.publicKey, randomAccount);
+
+      const randomStateAccount = await utils.findPlayerDataAcc(randomAccount.publicKey, authority.publicKey);
+      const ref1State = await program.account.playerState.fetch(randomStateAccount);
+      const player1 = await program.account.playerState.fetch(playerAccount);
+
+      expect(ref1State.referralTotal.toNumber()).to.equal(refBonus * 2);
+      expect(player1.referralTotal.toNumber()).to.equal(cashback * 2);
+    });
+
+    it("allows player to buy with a new referrer after random sets", async () => {
+      const amount = new anchor.BN(1e8);
+
+      await setupReferrer(refAccount);
+      await setupReferrer(randomAccount, 'referrerb');
+
+      // Buy premarket from player setting referrer
+      await buyPremarket(wallet.payer, amount, randomAccount.publicKey, randomAccount);
+
+      // Referrer should be set to to random
+      {
+        const player1 = await program.account.playerState.fetch(playerAccount);
+        expect(player1.currentReferrer.toBase58()).to.equal(randomAccount.publicKey.toBase58());
+      }
+
+      // Buy from player changing referrer
+      await buyPremarket(wallet.payer, amount, refAccount.publicKey);
+
+      // Referrer should be set to to referrer
+      {
+        const player1 = await program.account.playerState.fetch(playerAccount);
+        expect(player1.currentReferrer.toBase58()).to.equal(refAccount.publicKey.toBase58());
+      }
+    })
+
+    it("does not allow another account to overwrite referrer", async () => {
+      const amount = new anchor.BN(1e8);
+
+      await setupReferrer(refAccount);
+      await setupReferrer(refAccount2, 'referrerb');
+
+      // Buy premarket from player setting referrer
+      await buyPremarket(wallet.payer, amount, refAccount.publicKey);
+      await advancePreMarket();
+
+      // Allow random to buy for player but it shouldn't update referrer
+      await buyShrimp(wallet.payer, amount, refAccount.publicKey, randomAccount);
+
+      const player1 = await program.account.playerState.fetch(playerAccount);
+      expect(player1.currentReferrer.toBase58()).to.equal(refAccount.publicKey.toBase58());
     });
   });
 
@@ -912,7 +1129,7 @@ describe("Shrimp Farm", () => {
         .accounts({ player: refAccount.publicKey, authority: authority.publicKey })
         .signers([refAccount])
         .rpc(),
-      'Must buy before registering');
+        'Must buy before registering');
     });
 
     it("registers usernames & enforces uniqueness", async () => {
@@ -1086,7 +1303,7 @@ describe("Shrimp Farm", () => {
       const amount = new anchor.BN(1e8);
 
       const tx = await program.methods.buyPremarket(amount)
-        .accounts({ player: fundedAccount.publicKey, authority: authority.publicKey, referrer: NULL_KEY })
+        .accounts({ payer: fundedAccount.publicKey, player: fundedAccount.publicKey, authority: authority.publicKey, referrer: NULL_KEY })
         .instruction();
 
       const multiTx = new Transaction();

@@ -48,4 +48,6 @@ pub enum CustomErrors {
     MinBuyNotMet,
     #[msg("Invalid referrer")]
     InvalidReferrer,
+    #[msg("Minted out")]
+    MintedOut,
 }

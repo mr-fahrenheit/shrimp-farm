@@ -70,4 +70,12 @@ pub mod shrimp {
     pub fn testnet_bonus(ctx: Context<TestnetBonus>) -> Result<()> {
         instructions::testnet_bonus(ctx)
     }
+
+    pub fn set_minter(ctx: Context<SetMinter>, minter: Pubkey) -> Result<()> {
+        instructions::set_minter(ctx, minter)
+    }
+
+    pub fn admin_mint(ctx: Context<AdminMint>) -> Result<()> {
+        instructions::admin_mint(ctx)
+    }
 }

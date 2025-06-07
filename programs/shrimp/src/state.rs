@@ -144,3 +144,13 @@ impl AddressToUsername {
     pub const MAX_USERNAME_LENGTH: usize = 12;
     pub const SEED: &'static [u8] = b"address_to_username";
 }
+
+#[account]
+#[derive(InitSpace)]
+pub struct MinterState {
+    pub minter: Pubkey,
+}
+
+impl MinterState {
+    pub const SEED: &'static [u8] = b"minter";
+}

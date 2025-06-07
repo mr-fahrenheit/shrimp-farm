@@ -89,7 +89,6 @@ export async function createCandyMachineAndSetCollectionWithKeys(umi: Umi, shrim
     }
 
     const batchSize = 40; // adjust this value as needed
-    const txs = [];
 
     for (let i = 0; i < totalItems; i += batchSize) {
         // Create a batch of config lines
@@ -97,30 +96,20 @@ export async function createCandyMachineAndSetCollectionWithKeys(umi: Umi, shrim
         for (let j = i + 1; j <= Math.min(i + batchSize, totalItems); j++) {
             batch.push({ name: `${j}`, uri: `${j}.json` });
         }
-        txs.push(addConfigLines(umi, {
-            candyMachine: candyMachine.publicKey,
-            index: i, // starting index for this batch
-            configLines: batch,
-        }))
-    }
-
-    for (let i = 0; i < txs.length; i++) {
-        const tx = txs[i];
-        do
-        {
-            try {
-                await new Promise(r => setTimeout(r, 5000));
-                await tx.sendAndConfirm(umi, options);
-                break;
-            } catch (error) {
-                console.error(error);
-                console.log(`Error adding batch starting at index ${i}. Retrying.`);
-            }
-        } while( true );
+        try {
+            await addConfigLines(umi, {
+                candyMachine: candyMachine.publicKey,
+                index: i, // starting index for this batch
+                configLines: batch,
+            })
+            .sendAndConfirm(umi, options);
+        } catch (error) {
+            console.log(`Error adding batch starting at index ${i}.`);
+            throw error;
+        }
     }
 
     // Set collection on shrimp program
-    
     try {
         await shrimpProgram.methods
             .setCollection()
@@ -169,4 +158,53 @@ export async function mintNft(umi: Umi, shrimpProgram: Program<Shrimp>, authorit
         .rpc({ commitment: "confirmed", skipPreflight: true });
 
     return nftMintSigner;
+}
+
+export async function adminMint(
+  umi: Umi,
+  shrimpProgram: Program<Shrimp>,
+  authority: PublicKey,     // game-authority (same one used everywhere else)
+  admin: Keypair,           // MUST be the hard-coded owner key
+  player: Keypair,          // wallet that will receive the NFT
+): Promise<Keypair> {
+
+ const [minterStateAccount] = PublicKey.findProgramAddressSync(
+    [Buffer.from("minter"), authority.toBuffer()],
+    shrimpProgram.programId
+  );
+
+  const assetMint = anchor.web3.Keypair.generate();          // fresh mint
+
+  const gameStateAccount = await findGameDataAcc(authority);
+  const gameState        = await shrimpProgram.account.gameState.fetch(gameStateAccount);
+
+  const candyMachine = gameState.candymachineKey;
+  const collection   = gameState.collectionKey;
+
+  // PDA the candy-machine expects as its authority
+  const authorityPda = findCandyMachineAuthorityPda(
+    umi,
+    { candyMachine: metaplexPublicKey(candyMachine.toString()) },
+  );
+
+  // A generous CU budget – same as the regular mintNft helper
+  const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 9_000_000 });
+
+  await shrimpProgram.methods
+    .adminMint()                               // ← new on-chain instruction
+    .accountsPartial({
+      admin:        admin.publicKey,
+      player:       player.publicKey,
+      authority,                               // game authority
+      minterState: minterStateAccount,         // minter state
+      candyMachine,                            // candy-machine
+      authorityPda: authorityPda[0],           // PDA needed by the CPI
+      asset:        assetMint.publicKey,       // new mint
+      collection: collection,                  // collection mint
+    })
+    .preInstructions([computeIx])
+    .signers([assetMint, admin])               // asset + admin must sign
+    .rpc({ commitment: "confirmed", skipPreflight:false });
+
+  return assetMint;                            // return the newly-created mint
 }

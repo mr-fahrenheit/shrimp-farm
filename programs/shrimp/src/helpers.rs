@@ -23,7 +23,9 @@ pub fn calculate_trade(rt: u128, rs: u128, bs: u128) -> u128 {
 
 pub fn calculate_egg_buy(amount: u128, contract_balance: u128, market_eggs: u128) -> u128 {
     let eggs: u128 = calculate_trade(amount, contract_balance, market_eggs);
-    let fee: u128 = (eggs.checked_mul(FEE.try_into().unwrap()).unwrap()).checked_div(100).unwrap();
+    let fee: u128 = (eggs.checked_mul(FEE.into()).unwrap())
+        .checked_div(100)
+        .unwrap();
     return eggs.checked_sub(fee).unwrap();
 }
 
@@ -121,6 +123,7 @@ pub fn process_referral(
     referrer_state: &mut PlayerState,
     referrer: Pubkey,
     amount: u64,
+    payer: Pubkey
 ) -> Result<(u64, u64)> {
     // Do nothing for no referrer
     if referrer == pubkey!("11111111111111111111111111111111") {
@@ -133,12 +136,17 @@ pub fn process_referral(
     // Can't be self
     require!(!referrer.eq(&player), CustomErrors::InvalidReferrer);
 
+    // Only update the referrer for new player
+    if player.eq(&payer) || 
+        (player_state.current_referrer == pubkey!("11111111111111111111111111111111") && 
+            player_state.premarket_spent == 0 && 
+            player_state.market_spent == 0) {
+            player_state.current_referrer = referrer;
+    }
+
     // Returns (ref_fee, cashback)
     let ref_fee;
     let cashback;
-
-    // Proceed with referral
-    player_state.current_referrer = referrer;
 
     // Calculate referral fee and cashback
     ref_fee = amount

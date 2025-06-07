@@ -38,10 +38,6 @@ pub fn buy_premarket(
         amount,
     )?;
 
-    // Update player and game state
-    game_state.premarket_spent = game_state.premarket_spent.checked_add(amount).unwrap();
-    player_state.premarket_spent = player_state.premarket_spent.checked_add(amount).unwrap();
-
     // Handle referrals
     let referrer_key = referrer.as_ref().map(|x| x.key());
     if let Some(referrer_pubkey) = referrer_key {
@@ -53,8 +49,13 @@ pub fn buy_premarket(
             referrer_state,
             referrer_pubkey,
             amount,
+            ctx.accounts.payer.key(),
         )?;
     }
+
+    // Update player and game state
+    game_state.premarket_spent = game_state.premarket_spent.checked_add(amount).unwrap();
+    player_state.premarket_spent = player_state.premarket_spent.checked_add(amount).unwrap();
 
     // Add dev fee to dev balance
     game_state.dev_balance = game_state

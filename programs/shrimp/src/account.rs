@@ -7,7 +7,11 @@ use solana_program::{pubkey::Pubkey, sysvar};
 #[derive(Accounts)]
 pub struct BuyAccounts<'info> {
     #[account(mut)]
-    pub player: Signer<'info>,
+    pub payer: Signer<'info>,
+
+    /// CHECK: No constraint required
+    #[account()]
+    pub player: AccountInfo<'info>,
 
     /// CHECK: Custom check
     #[account(address = game_state.authority)]
@@ -22,7 +26,7 @@ pub struct BuyAccounts<'info> {
 
     #[account(
         init_if_needed,
-        payer = player,
+        payer = payer,
         space = 8 + PlayerState::INIT_SPACE,
         seeds = [player.key().as_ref(), PlayerState::SEED, authority.key().as_ref()],
         bump
@@ -31,7 +35,7 @@ pub struct BuyAccounts<'info> {
 
     #[account(
         init_if_needed,
-        payer = player,
+        payer = payer,
         space = 8 + PlayerState::INIT_SPACE,
         seeds = [referrer.as_ref().unwrap().key().as_ref(), PlayerState::SEED, authority.key().as_ref()],
         bump

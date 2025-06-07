@@ -147,18 +147,6 @@ async function getBonusPercentFromTx(
 
 // Types
 
-// type TFinalized = { authority: PublicKey };
-// type TInitialized = { owner: PublicKey, totalSupply: Number, seedBalance: Number, mrfWallet: PublicKey, bkWallet: PublicKey, shiragaWallet: PublicKey };
-// type TNFTMinted = { id: PublicKey, holder: PublicKey, uri: String };
-// type TFeeUpdated = { fee: Number };
-// type TDevWithdrawn = { owner: PublicKey, devBalance: Number; mrfAmount: Number, bkAmount: Number, shiragaAmount:Number, authority: PublicKey };
-// type TUserWithdrawn = { owner: PublicKey, amount: Number; lastInteraction: Number, marketEggs: Number, sellTotal: Number };
-// type TBuy = { owner: PublicKey, shrimpToAdd: Number, refFee: Number, refAddress: PublicKey, extraEggs: Number, premarketEarned:Number, devBalance: Number, amount: Number; lastInteraction: Number, shrimp: Number, marketEggs: Number };
-// type TSell= { owner: PublicKey, eggSell: Number, sellTotal: Number, nftHolder:Boolean, eggs: Number; lastInteraction: Number,  marketEggs: Number};
-// type THatch = { owner: PublicKey, shrimpToAdd: Number, nftHolder: Boolean, eggs: Number; lastInteraction: Number,  shrimp: Number};
-// type TBuyPremarket = { owner: PublicKey, refFee: Number, refAddress: PublicKey, premarketSpent:Number, gamePremarketSpent:Number, amount: Number; lastInteraction: Number, shrimp: Number, marketEggs: Number };
-// type TMarketUpdated = { newMarketEggs: anchor.BN };
-
 export { TOKEN_METADATA_PROGRAM_ID,
   findPlayerDataAcc, findGameDataAcc, findContractDataAcc, findGameTreasuryAcc, findNftMintAuthority, findUsernameToAddressAcc, findAddressToUsernameAcc, shouldError, shouldRevert, findPlayerDataAccWithDebug,
   getPDAPublicKey, getMetadata, getMasterEdition, getBonusPercentFromTx };

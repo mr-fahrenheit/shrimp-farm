@@ -53,7 +53,7 @@ pub fn buy_shrimp(
 
     // Transfer SOL to the treasury
     transfer_lamports(
-        &ctx.accounts.player,
+        &ctx.accounts.payer,
         &game_state.to_account_info(),
         &ctx.accounts.system_program,
         amount
@@ -77,10 +77,6 @@ pub fn buy_shrimp(
     let shrimp_to_add = eggs_bought.checked_div(EGGS_TO_HATCH_1SHRIMP).unwrap_or_default();
     player_state.shrimp = player_state.shrimp.checked_add(shrimp_to_add).unwrap_or(player_state.shrimp);
 
-    // Update last interaction and market spend
-    player_state.last_interaction = now;
-    player_state.market_spent = player_state.market_spent.checked_add(amount).unwrap();
-
     // Handle referrals
     let referrer_key = referrer.as_ref().map(|x| x.key());
     if let Some(referrer_pubkey) = referrer_key {
@@ -92,8 +88,13 @@ pub fn buy_shrimp(
             referrer_state,
             referrer_pubkey,
             amount,
+            ctx.accounts.payer.key(),
         )?;
     }
+
+    // Update last interaction and market spend
+    player_state.last_interaction = now;
+    player_state.market_spent = player_state.market_spent.checked_add(amount).unwrap();
 
     // Recalculate the game balance after state updates
     let treasury_lamports = **game_state.to_account_info().lamports.borrow();
